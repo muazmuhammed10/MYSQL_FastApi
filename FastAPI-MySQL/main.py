@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
-from schemas import UserCreate, UserUpdate
 
 from database import SessionLocal
+from model import User
+from schemas import UserCreate, UserUpdate
+
 
 app = FastAPI()
 
@@ -24,19 +25,18 @@ def home():
 
 @app.get("/users")
 def get_users(db: Session = Depends(get_db)):
-    result = db.execute(text("SELECT * FROM users"))
-    return result.mappings().all()
+    users = db.query(User).all()
+    return users
+
 
 @app.get("/users/{user_id}")
 def get_user(user_id: int, db: Session = Depends(get_db)):
-    query = text("SELECT * FROM users WHERE id = :user_id")
-    result = db.execute(query, {"user_id": user_id})
+    user = db.query(User).filter(User.id == user_id).first()
 
-    user = result.mappings().first()
     if user is None:
         return {"message": "User not found"}
+
     return user
-    
 
 
 @app.post("/users", status_code=201)
@@ -44,37 +44,27 @@ def create_user(
     user: UserCreate,
     db: Session = Depends(get_db)
 ):
-    check_query = text("""
-        SELECT id 
-        FROM users
-        WHERE email = :email
-    """)
-    existing_user = db.execute(check_query,
-         {"email": user.email}).first()
+    existing_user = db.query(User).filter(
+        User.email == user.email
+    ).first()
+
     if existing_user:
         raise HTTPException(
-            status_code=400, detail="Email already exists"
+            status_code=400,
+            detail="Email already exists"
         )
-    insert_query = text("""
-        INSERT INTO users (name, email)
-        VALUES (:name, :email)
-        """)
-    
-    db.execute(
-        insert_query,
-        {
-            "name": user.name,
-            "email": user.email
-        }
+
+    new_user = User(
+        name=user.name,
+        email=user.email
     )
 
+    db.add(new_user)
     db.commit()
+    db.refresh(new_user)
 
-    return {
-        "message": "User created successfully",
-        "name": user.name,
-        "email": user.email
-    }
+    return new_user
+
 
 @app.put("/users/{user_id}")
 def update_user(
@@ -82,38 +72,38 @@ def update_user(
     user: UserUpdate,
     db: Session = Depends(get_db)
 ):
-    query = text("""
-        UPDATE users
-        SET name = :name, email = :email
-        WHERE id = :user_id""")
-    result = db.execute(
-        query,{
-            "user_id": user_id,
-            "name": user.name,
-            "email": user.email
-        }
-    )
+    existing_user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+
+    if existing_user is None:
+        return {"message": "User not found"}
+
+    existing_user.name = user.name
+    existing_user.email = user.email
 
     db.commit()
+    db.refresh(existing_user)
 
-    if result.rowcount == 0:
-        return {"message": "user not found"}
-    return {
-        "message": "user updated successfully",
-        "id": user_id,
-        "name": user.name,
-        "email": user.email
-        
-    }
-    
+    return existing_user
+
 
 @app.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db)):
-    query = text("DELETE FROM users WHERE id = :user_id")
-    result = db.execute(query, {"user_id": user_id})
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
 
+    if user is None:
+        return {"message": "User not found"}
+
+    db.delete(user)
     db.commit()
 
-    if result.rowcount == 0:
-        return {"message": "user not found"}
-    return {"message": "user deleted successfully", "id": user_id}
+    return {
+        "message": "User deleted successfully",
+        "id": user_id
+    }
